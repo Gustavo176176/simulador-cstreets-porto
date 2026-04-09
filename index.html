@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard C-ITS | V2X C-Streets Porto</title>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --panel-bg: #1e293b;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .dashboard-panel {
+            background-color: var(--panel-bg);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 1px solid #334155;
+        }
+
+        .header h1 { margin: 0; font-size: 1.2rem; color: var(--accent-blue); text-transform: uppercase; letter-spacing: 1px;}
+        .header p { margin: 5px 0 0 0; font-size: 0.85rem; color: var(--text-muted); }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .metric-card {
+            background: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #334155;
+        }
+
+        .metric-value { font-size: 1.5rem; font-weight: bold; font-family: monospace; }
+        .metric-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-top: 5px;}
+
+        .controls { display: flex; flex-direction: column; gap: 10px; }
+        
+        button {
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid transparent;
+        }
+
+        button:hover { filter: brightness(1.2); }
+        
+        button.active.btn-v2i { background: rgba(59, 130, 246, 0.2); border-left-color: var(--accent-blue); color: var(--accent-blue); }
+        button.active.btn-v2v { background: rgba(16, 185, 129, 0.2); border-left-color: var(--accent-green); color: var(--accent-green); }
+        button.btn-emerg { background: var(--accent-red); margin-top: 15px;}
+        button.btn-emerg:active { transform: scale(0.95); }
+
+        .canvas-container {
+            background-color: var(--panel-bg);
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        canvas { width: 100%; height: 100%; }
+
+        /* Status indicator pulse */
+        .status-dot { height: 10px; width: 10px; background-color: #475569; border-radius: 50%; }
+        .active .status-dot { box-shadow: 0 0 10px currentColor; background-color: currentColor; }
+
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-panel">
+        <div class="header">
+            <h1>C-Streets TM2.0</h1>
+            <p>Simulação V2X- Área Metropolitana do Porto</p>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value" id="valEmissions" style="color: var(--accent-green);">0g</div>
+                <div class="metric-label">CO2 Mitigado</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="valWaitTime">0.0s</div>
+                <div class="metric-label">Tempo Médio Espera</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="btnV2I" class="btn-v2i">
+                V2I - Semaforização <div class="status-dot"></div>
+            </button>
+            <button id="btnV2V" class="btn-v2v">
+                V2V - Entre veículos <div class="status-dot"></div>
+            </button>
+            <button id="btnEmerg" class="btn-emerg">
+                🚑 Ativar INEM
+            </button>
+        </div>
+        
+        <div style="margin-top: auto; font-size: 0.7rem; color: var(--text-muted); text-align: center;">
+            ISEP MEEC
+        </div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="simCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Resize canvas to fit container
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // State variables
+        let isV2I = false;
+        let isV2V = false;
+        let emergencyMode = false;
+        let co2Saved = 0;
+        let totalWaitTime = 0;
+
+        // UI Event Listeners
+        document.getElementById('btnV2I').addEventListener('click', function() {
+            isV2I = !isV2I; this.classList.toggle('active');
+        });
+        document.getElementById('btnV2V').addEventListener('click', function() {
+            isV2V = !isV2V; this.classList.toggle('active');
+        });
+        document.getElementById('btnEmerg').addEventListener('click', function() {
+            emergencyMode = true;
+            trafficLight.state = 'green'; // Onda verde instantanea
+            trafficLight.timer = 300;
+            setTimeout(() => emergencyMode = false, 6000);
+        });
+
+        // Traffic Light Object
+        const trafficLight = {
+            x: 0, y: 0, // Defined dynamically in draw
+            state: 'red', // red, green, yellow
+            timer: 150,
+            
+            update: function() {
+                if(emergencyMode) { this.state = 'green'; return; }
+
+                this.timer--;
+                if (this.timer <= 0) {
+                    if (this.state === 'red') { this.state = 'green'; this.timer = 200; }
+                    else if (this.state === 'green') { this.state = 'yellow'; this.timer = 50; }
+                    else if (this.state === 'yellow') { this.state = 'red'; this.timer = 200; }
+                }
+
+                // Lógica V2I (Otimização Semafórica)
+                if (isV2I && this.state === 'red') {
+                    // Verifica se há carros a aproximar-se
+                    let approaching = cars.some(c => c.x > this.x - 400 && c.x < this.x && c.speed > 0);
+                    if (approaching && this.timer > 50) {
+                        this.timer -= 2; // Acelera o vermelho (algoritmo dinâmico)
+                        co2Saved += 0.5; // Poupa emissões ao evitar paragem longa
+                    }
+                }
+            },
+
+            draw: function(ctx, w, h) {
+                this.x = w / 2;
+                this.y = h / 2 - 120;
+
+                // Poste
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(this.x - 5, this.y, 10, 150);
+
+                // Caixa do semáforo
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(this.x - 20, this.y - 80, 40, 100);
+                ctx.strokeStyle = '#475569';
+                ctx.strokeRect(this.x - 20, this.y - 80, 40, 100);
+
+                // Luzes
+                const drawLight = (cy, color, isActive) => {
+                    ctx.beginPath();
+                    ctx.arc(this.x, cy, 12, 0, Math.PI * 2);
+                    ctx.fillStyle = isActive ? color : '#1e293b';
+                    if (isActive) {
+                        ctx.shadowBlur = 20;
+                        ctx.shadowColor = color;
+                    } else {
+                        ctx.shadowBlur = 0;
+                    }
+                    ctx.fill();
+                    ctx.shadowBlur = 0; // reset
+                };
+
+                drawLight(this.y - 60, '#ef4444', this.state === 'red');
+                drawLight(this.y - 30, '#eab308', this.state === 'yellow');
+                drawLight(this.y, '#10b981', this.state === 'green');
+                
+                // RSU Antenna
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillRect(this.x - 2, this.y - 95, 4, 15);
+                ctx.beginPath(); ctx.arc(this.x, this.y - 95, 4, 0, Math.PI*2); ctx.fill();
+
+                // Ondas de rádio V2I
+                if(isV2I) {
+                    ctx.strokeStyle = 'rgba(59, 130, 246, ' + (Math.sin(Date.now()/200)*0.5 + 0.2) + ')';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(this.x, this.y - 95, 40 + Math.sin(Date.now()/200)*10, 0, Math.PI*2); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(this.x, this.y - 95, 70 + Math.sin(Date.now()/200)*20, 0, Math.PI*2); ctx.stroke();
+                }
+            }
+        };
+
+        // Cars Object
+        class Car {
+            constructor(x, id) {
+                this.id = id;
+                this.x = x;
+                this.y = 0; // Defined dynamically
+                this.baseSpeed = 3 + Math.random();
+                this.speed = this.baseSpeed;
+                this.color = `hsl(${Math.random()*360}, 70%, 60%)`;
+                this.width = 60;
+                this.height = 25;
+            }
+
+            update(stopLine, carAhead) {
+                let distToStop = stopLine - this.x - this.width;
+                let isRedLight = trafficLight.state === 'red' || trafficLight.state === 'yellow';
+
+                // Lógica Base: Parar no semáforo
+                if (isRedLight && distToStop > 0 && distToStop < 150) {
+                    this.speed *= 0.90; // Travar
+                    if (distToStop < 10) this.speed = 0;
+                    if(this.speed < 0.5) totalWaitTime += 0.016; // Aumentar tempo de espera
+                } else {
+                    this.speed += 0.05; // Acelerar
+                    if (this.speed > this.baseSpeed) this.speed = this.baseSpeed;
+                }
+
+                // Lógica V2V: Evitar bater no carro da frente
+                if (carAhead) {
+                    let distToCar = carAhead.x - this.x - this.width;
+                    if (isV2V) {
+                        // V2V ON: Reação preditiva (suave e antecipada)
+                        if (distToCar < 120) {
+                            this.speed = carAhead.speed; // Iguala a velocidade rapidamente
+                            
+                            // Desenhar linha de comunicação V2V
+                            ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+                            ctx.setLineDash([5, 5]);
+                            ctx.beginPath();
+                            ctx.moveTo(this.x + this.width, this.y + this.height/2);
+                            ctx.lineTo(carAhead.x, carAhead.y + this.height/2);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
+                    } else {
+                        // V2V OFF: Reação humana (tardia e brusca)
+                        if (distToCar < 40) this.speed = 0; // Trava a fundo
+                        else if (distToCar < 80) this.speed *= 0.8;
+                    }
+                }
+
+                // Emergência: Transforma o primeiro carro numa ambulância
+                if (emergencyMode && this.id === 0) {
+                    this.color = '#ef4444';
+                    this.baseSpeed = 6;
+                    this.speed = 6;
+                    
+                    // Sirenes visuais
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = (Date.now() % 400 < 200) ? 'blue' : 'red';
+                } else if (!emergencyMode && this.id === 0) {
+                    this.color = '#3b82f6';
+                    this.baseSpeed = 3.5;
+                    ctx.shadowBlur = 0;
+                }
+
+                this.x += this.speed;
+
+                // Loop
+                if (this.x > canvas.width + 100) {
+                    this.x = -150;
+                    this.speed = this.baseSpeed;
+                }
+            }
+
+            draw(ctx, h) {
+                this.y = h / 2 + 10;
+                
+                // Sombra do carro
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.fillRect(this.x + 5, this.y + 20, this.width, 10);
+
+                // Carroçaria
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 6);
+                ctx.fill();
+
+                // Vidros
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(this.x + 10, this.y + 2, 15, 21);
+                ctx.fillRect(this.x + 35, this.y + 2, 15, 21);
+
+                // Faróis vermelhos (travagem)
+                if (this.speed < this.baseSpeed - 0.5) {
+                    ctx.fillStyle = '#ff0000';
+                    ctx.shadowBlur = 10; ctx.shadowColor = 'red';
+                    ctx.fillRect(this.x, this.y + 2, 3, 6);
+                    ctx.fillRect(this.x, this.y + 17, 3, 6);
+                    ctx.shadowBlur = 0;
+                }
+            }
+        }
+
+        let cars = [
+            new Car(100, 0),
+            new Car(-150, 1),
+            new Car(-400, 2),
+            new Car(-600, 3)
+        ];
+
+        // Main Loop
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            let w = canvas.width;
+            let h = canvas.height;
+
+            // Fundo / Relvado
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, w, h);
+
+            // Estrada
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, h/2 - 40, w, 120);
+            
+            // Marcações da estrada
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(0, h/2 - 35); ctx.lineTo(w, h/2 - 35); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, h/2 + 75); ctx.lineTo(w, h/2 + 75); ctx.stroke();
+            
+            // Linha tracejada
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.setLineDash([30, 20]);
+            ctx.beginPath(); ctx.moveTo(0, h/2 + 20); ctx.lineTo(w, h/2 + 20); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Linha de Paragem
+            let stopLine = w / 2 - 30;
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(stopLine, h/2 - 35, 8, 110);
+
+            // Semáforo e Lógica
+            trafficLight.update();
+            trafficLight.draw(ctx, w, h);
+
+            // Ordenar carros pela posição x para o cálculo V2V
+            cars.sort((a, b) => b.x - a.x);
+
+            cars.forEach((car, index) => {
+                let carAhead = (index > 0) ? cars[index - 1] : null;
+                // Se o carro passou a linha, não olha para o semáforo
+                let effectiveStopLine = (car.x > stopLine) ? 9999 : stopLine;
+                car.update(effectiveStopLine, carAhead);
+                car.draw(ctx, h);
+
+                // Desenhar V2I link
+                if (isV2I && car.x > stopLine - 500 && car.x < stopLine) {
+                    ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(car.x + car.width/2, car.y);
+                    ctx.lineTo(trafficLight.x, trafficLight.y - 90);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            });
+
+            // Atualizar UI Dashboard
+            document.getElementById('valEmissions').innerText = Math.floor(co2Saved) + 'g';
+            document.getElementById('valWaitTime').innerText = totalWaitTime.toFixed(1) + 's';
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
