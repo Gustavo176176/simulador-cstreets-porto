@@ -8,5 +8,5 @@ Um simulador web interativo desenvolvido para demonstrar o impacto das tecnologi
 O dashboard permite selecionar diferentes cenários em tempo real e visualizar as métricas de trânsito (CO2 e tempo de espera):
 * **V2I:** Otimização da comunicação entre veículos e semáforos (infraestrutura).
 * **V2V:** Comunicação direta entre veículos.
-* **INEM:** Sistema de prioridade de em casos de emergência (ativa o sinal verde).
+* **INEM:** Sistema de prioridade em casos de emergência (ativa o sinal verde).
 ##
